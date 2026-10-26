@@ -1,0 +1,205 @@
+<title>iPhone Camera</title>
+<style>
+:root{--bg:#f6f5f2;--card:#fff;--fg:#1d1d1b;--mut:#6b6a66;--line:#e3e1db;--acc:#c2552d;--acc-fg:#fff;--ok:#2f7d4f}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#171716;--card:#222220;--fg:#efeee9;--mut:#a3a29c;--line:#34332f;--acc:#e0754c;--acc-fg:#1a0d07;--ok:#5fbf86}}
+:root[data-theme="dark"]{--bg:#171716;--card:#222220;--fg:#efeee9;--mut:#a3a29c;--line:#34332f;--acc:#e0754c;--acc-fg:#1a0d07;--ok:#5fbf86}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+main{max-width:560px;margin:0 auto;padding:20px 16px 48px}
+h1{font-size:22px;margin:0 0 4px}
+p.sub{margin:0 0 18px;color:var(--mut);font-size:14px}
+.btns{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+button,label.btn{display:flex;align-items:center;justify-content:center;gap:8px;min-height:52px;border-radius:14px;border:1px solid var(--line);background:var(--card);color:var(--fg);font:600 16px/1 inherit;cursor:pointer;padding:0 12px;text-align:center}
+.primary{background:var(--acc)!important;color:var(--acc-fg)!important;border-color:transparent!important;grid-column:1/-1;min-height:64px;font-size:18px}
+input[type=file]{display:none}
+textarea{width:100%;margin-top:12px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--fg);font:15px inherit;padding:10px;resize:vertical;min-height:44px}
+#status{margin:12px 0 0;font-size:14px;color:var(--mut);min-height:20px}
+#status.ok{color:var(--ok)}
+.live{margin-top:18px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px}
+.live h2,.list h2{font-size:15px;margin:0 0 8px}
+video{width:100%;border-radius:10px;background:#000;display:none}
+.row{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}
+select{min-height:44px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--fg);padding:0 8px;font:15px inherit}
+.list{margin-top:22px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.grid figure{margin:0;position:relative}
+.grid img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px;display:block;background:var(--line)}
+.grid figcaption{font-size:11px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.empty{color:var(--mut);font-size:14px}
+.hidden{display:none!important}
+.banner{display:flex;gap:14px;align-items:center;background:var(--card);border:1px solid var(--line);border-left:4px solid var(--acc);border-radius:14px;padding:12px;margin-bottom:16px}
+.banner b{display:block;margin-bottom:4px}
+.banner span{font-size:14px;color:var(--mut)}
+#qr{flex:none;background:#fff;padding:6px;border-radius:8px;line-height:0}
+#qr img{width:120px;height:120px;image-rendering:pixelated}
+</style>
+
+<main>
+  <h1>iPhone Camera</h1>
+  <p class="sub">Apri questa pagina sull'iPhone. Le foto che scatti o scegli qui arrivano a Claude, che può guardarle.</p>
+
+  <div class="banner hidden" id="desk">
+    <div id="qr"></div>
+    <div><b>Sei sul Mac</b><span>Inquadra il codice con la fotocamera dell'iPhone per aprire questa pagina sul telefono. Oppure usa la vista live qui sotto e scegli l'iPhone come camera (Continuity Camera).</span></div>
+  </div>
+
+  <div class="btns" id="actions">
+    <label class="btn primary" for="cam">📷 Scatta foto</label>
+    <input id="cam" type="file" accept="image/*" capture="environment">
+    <label class="btn" for="pick" style="grid-column:1/-1">🖼️ Scegli dalla galleria</label>
+    <input id="pick" type="file" accept="image/*" multiple>
+  </div>
+  <textarea id="note" placeholder="Nota per Claude (facoltativa): cosa deve guardare?"></textarea>
+  <div id="status"></div>
+
+  <section class="live" id="liveBox">
+    <h2>Vista live</h2>
+    <video id="vid" playsinline muted></video>
+    <div class="row">
+      <button id="liveBtn">▶︎ Avvia live</button>
+      <select id="every" aria-label="Intervallo">
+        <option value="3">ogni 3 s</option>
+        <option value="5" selected>ogni 5 s</option>
+        <option value="10">ogni 10 s</option>
+      </select>
+      <button id="flip" class="hidden">↺ Gira camera</button>
+      <select id="camSel" class="hidden" aria-label="Camera"></select>
+      <button id="snap" class="hidden">📸 Scatta da qui</button>
+    </div>
+    <p class="sub" id="liveInfo" style="margin:8px 0 0">Invia un fotogramma a Claude a intervalli regolari. Si ferma quando chiudi la pagina.</p>
+  </section>
+
+  <section class="list">
+    <h2>Ultime foto inviate</h2>
+    <div class="grid" id="grid"></div>
+    <p class="empty" id="empty">Nessuna foto ancora.</p>
+  </section>
+</main>
+
+<script>
+(function(){
+  const $=id=>document.getElementById(id);
+  const st=(t,ok)=>{const s=$('status');s.textContent=t;s.className=ok?'ok':''};
+  let db=null, assets=null, user=null;
+  const ready=(async()=>{
+    [db,assets,user]=await Promise.all([claude.use('db'),claude.use('assets'),claude.use('user')]);
+    if(!db||!assets){st('Per inviare foto devi aprire la pagina su claude.ai con il tuo account (proprietario/editor).');$('actions').style.opacity=.5}
+    else subscribe();
+  })();
+
+  async function shrink(file,max=1600){
+    const bmp=await createImageBitmap(file).catch(()=>null);
+    if(!bmp) return file;
+    const k=Math.min(1,max/Math.max(bmp.width,bmp.height));
+    const c=document.createElement('canvas');c.width=Math.round(bmp.width*k);c.height=Math.round(bmp.height*k);
+    c.getContext('2d').drawImage(bmp,0,0,c.width,c.height);
+    return await new Promise(r=>c.toBlob(b=>r(b||file),'image/jpeg',0.85));
+  }
+
+  async function send(blob,kind){
+    await ready; if(!db||!assets) return;
+    const t=(blob.type||'').split(';')[0]||'image/jpeg';
+    const up=await assets.upload(blob,{type:t});
+    const by=user?await user.id().catch(()=>null):null;
+    const ts=new Date().toISOString();
+    if(kind==='live'){
+      const ref=db.doc('live/current');
+      const prev=await ref.get().catch(()=>null);
+      await ref.set({assetId:up.id,url:up.url,at:ts,by});
+      const old=prev&&prev.exists&&prev.data().assetId;
+      if(old&&old!==up.id) assets.delete(old).catch(()=>{});
+    }else{
+      await db.collection('photos').add({assetId:up.id,url:up.url,at:ts,note:$('note').value.trim(),by,seen:false});
+    }
+    return up;
+  }
+
+  async function handle(files){
+    if(!files||!files.length) return;
+    let n=0;
+    for(const f of files){
+      try{st(`Invio ${++n}/${files.length}…`);await send(await shrink(f),'photo')}
+      catch(e){const c=e&&e.code;st(c==='not_granted'?'Permesso negato: tocca di nuovo e consenti il caricamento.':c==='unsupported_type'?'Formato non supportato: in Impostazioni > Fotocamera > Formati scegli "Più compatibile".':'Errore: '+(e&&e.message||c||e));return}
+    }
+    $('note').value='';
+    st(files.length>1?`${files.length} foto inviate a Claude ✓`:'Foto inviata a Claude ✓',true);
+  }
+  $('cam').onchange=e=>{handle([...e.target.files]);e.target.value=''};
+  $('pick').onchange=e=>{handle([...e.target.files]);e.target.value=''};
+
+  function subscribe(){
+    db.collection('photos').orderBy('at','desc').limit(12).onSnapshot(s=>{
+      const g=$('grid');g.textContent='';$('empty').classList.toggle('hidden',!s.empty);
+      s.docs.forEach(d=>{const v=d.data()||{};
+        const f=document.createElement('figure');const i=document.createElement('img');
+        i.src='/_blob/'+v.assetId;i.alt='';i.loading='lazy';
+        const c=document.createElement('figcaption');
+        c.textContent=new Date(v.at).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})+(v.note?' · '+v.note:'');
+        f.append(i,c);g.append(f)});
+    },()=>{});
+  }
+
+  // Mac: QR per aprire sull'iPhone
+  const PAGE='__PAGE_URL__';
+  if(!matchMedia('(pointer:coarse)').matches && PAGE.indexOf('http')===0){
+    $('desk').classList.remove('hidden');
+    const s=document.createElement('script');
+    s.src='https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js';
+    s.onload=()=>{try{const q=qrcode(0,'M');q.addData(PAGE);q.make();$('qr').innerHTML=q.createImgTag(4,0)}catch(e){$('qr').classList.add('hidden')}};
+    s.onerror=()=>$('qr').classList.add('hidden');
+    document.head.append(s);
+  }
+
+  // Live
+  let stream=null,timer=null,facing='environment',devId='';
+  if(!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia)){
+    $('liveBtn').disabled=true;$('liveInfo').textContent='La vista live non è disponibile in questo browser: usa "Scatta foto".';
+  }
+  async function startCam(){
+    const vc=devId?{deviceId:{exact:devId},width:{ideal:1280}}:{facingMode:facing,width:{ideal:1280}};
+    stream=await navigator.mediaDevices.getUserMedia({video:vc,audio:false});
+    const v=$('vid');v.srcObject=stream;v.style.display='block';await v.play();
+    try{
+      const cams=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='videoinput');
+      const sel=$('camSel');
+      if(cams.length>1){
+        const cur=stream.getVideoTracks()[0].getSettings().deviceId;
+        sel.textContent='';cams.forEach((c,i)=>{const o=document.createElement('option');o.value=c.deviceId;o.textContent=c.label||('Camera '+(i+1));if(c.deviceId===cur)o.selected=true;sel.append(o)});
+        sel.classList.remove('hidden');
+      }
+    }catch(e){}
+  }
+  function stopLive(){
+    clearInterval(timer);timer=null;
+    if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}
+    $('vid').style.display='none';$('liveBtn').textContent='▶︎ Avvia live';$('flip').classList.add('hidden');$('snap').classList.add('hidden');$('camSel').classList.add('hidden');
+    st('Live fermata, camera spenta.',true);
+  }
+  async function frame(){
+    const v=$('vid');if(!v.videoWidth) return;
+    const k=Math.min(1,1280/Math.max(v.videoWidth,v.videoHeight));
+    const c=document.createElement('canvas');c.width=v.videoWidth*k;c.height=v.videoHeight*k;
+    c.getContext('2d').drawImage(v,0,0,c.width,c.height);
+    const b=await new Promise(r=>c.toBlob(r,'image/jpeg',0.75));
+    try{await send(b,'live');st('Live attiva · ultimo fotogramma '+new Date().toLocaleTimeString('it-IT'),true)}
+    catch(e){st('Errore live: '+(e&&e.message||e.code||e))}
+  }
+  $('liveBtn').onclick=async()=>{
+    if(timer){stopLive();return}
+    try{await startCam()}catch(e){$('liveInfo').textContent='Accesso alla fotocamera negato o non disponibile qui. Usa "Scatta foto".';return}
+    $('liveBtn').textContent='■ Ferma live';$('flip').classList.remove('hidden');$('snap').classList.remove('hidden');
+    await frame();timer=setInterval(frame,+$('every').value*1000);
+  };
+  $('every').onchange=()=>{if(timer){clearInterval(timer);timer=setInterval(frame,+$('every').value*1000)}};
+  $('camSel').onchange=async e=>{devId=e.target.value;if(stream)stream.getTracks().forEach(t=>t.stop());try{await startCam()}catch(err){st('Impossibile usare questa camera.')}};
+  $('snap').onclick=async()=>{
+    const v=$('vid');if(!v.videoWidth) return;
+    const c=document.createElement('canvas');c.width=v.videoWidth;c.height=v.videoHeight;
+    c.getContext('2d').drawImage(v,0,0);
+    const b=await new Promise(r=>c.toBlob(r,'image/jpeg',0.9));
+    try{st('Invio…');await send(await shrink(b),'photo');$('note').value='';st('Foto inviata a Claude ✓',true)}catch(e){st('Errore: '+(e&&e.message||e.code||e))}
+  };
+  $('flip').onclick=async()=>{devId='';facing=facing==='environment'?'user':'environment';if(stream)stream.getTracks().forEach(t=>t.stop());try{await startCam()}catch(e){}};
+  window.addEventListener('pagehide',()=>{if(stream)stream.getTracks().forEach(t=>t.stop())});
+})();
+</script>
